@@ -2,7 +2,7 @@ name: Market News Bot (LINE)
 
 on:
   schedule:
-    - cron: "0 */2 * * *"   # รันทุก 2 ชั่วโมง (ประหยัด quota สูงสุด)
+    - cron: "*/30 * * * *"   # รันทุก 30 นาที
   workflow_dispatch:
 
 jobs:
