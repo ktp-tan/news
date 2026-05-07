@@ -11,6 +11,7 @@ import requests
 import yfinance as yf
 from datetime import datetime, timezone
 from pathlib import Path
+from deep_translator import GoogleTranslator
 
 # ── Config ────────────────────────────────────────────────────────────────────
 LINE_CHANNEL_TOKEN = os.environ["LINE_CHANNEL_TOKEN"]
@@ -184,12 +185,36 @@ def format_news_block(news: dict, score: int, category: str) -> str:
         news.get("headline", ""),
         f"{news.get('source','?')} | {ts_str}",
     ]
-    summary = news.get("summary", "")
-    if summary:
-        lines.append(summary[:150] + ("…" if len(summary) > 150 else ""))
+    
+    summary_en = news.get("summary", "")
+    summary_th = ""
+    if summary_en:
+        try:
+            summary_th = GoogleTranslator(source='auto', target='th').translate(summary_en)
+            if len(summary_th) > 200:
+                summary_th = summary_th[:200] + "…"
+        except Exception as e:
+            print(f"[warn] translate error: {e}")
+            summary_th = summary_en[:150] + ("…" if len(summary_en) > 150 else "")
+            
+    if summary_th:
+        lines.append(f"🇹🇭 {summary_th}")
+
     url = news.get("url", "")
+    short_url = ""
     if url:
-        lines.append(url)
+        try:
+            r = requests.get("https://is.gd/create.php", params={"format": "simple", "url": url}, timeout=5)
+            if r.status_code == 200:
+                short_url = r.text.strip()
+            else:
+                short_url = url
+        except Exception:
+            short_url = url
+
+    if short_url:
+        lines.append(f"🔗 {short_url}")
+        
     return "\n".join(lines)
 
 
