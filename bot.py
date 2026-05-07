@@ -20,7 +20,7 @@ FINNHUB_TOKEN      = os.environ["FINNHUB_TOKEN"]
 STATE_FILE       = Path("state.json")
 SCORE_THRESHOLD  = 85     # สูงกว่าเดิม — เฉพาะข่าวสำคัญมาก (ประหยัด quota)
 PRICE_SPIKE_PCT  = 0.5    # % ขยับที่ถือว่าผิดปกติ
-PRICE_WINDOW_MIN = 10
+PRICE_WINDOW_MIN = 15
 MAX_NEWS_PER_MSG = 3      # รวมกี่ข่าวต่อ 1 ข้อความ
 
 
@@ -247,7 +247,7 @@ def main():
     # 2) ข่าว
     print("[*] Fetching news…")
     all_news    = fetch_all_news()
-    cutoff      = time.time() - 20 * 60
+    cutoff      = time.time() - 24 * 60 * 60
     recent_news = [n for n in all_news if n.get("datetime", 0) >= cutoff]
     print(f"[*] Recent: {len(recent_news)} items")
 
