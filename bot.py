@@ -8,6 +8,7 @@ import os
 import json
 import time
 import requests
+import re
 import yfinance as yf
 from datetime import datetime, timezone
 from pathlib import Path
@@ -75,7 +76,8 @@ def score_news(headline: str, summary: str, source: str) -> tuple[int, str]:
     text = (headline + " " + summary).lower()
     score, category = 0, "General"
     for keyword, pts, cat in KEYWORD_RULES:
-        if keyword in text and pts > score:
+        pattern = r'\b' + re.escape(keyword) + r'\b'
+        if re.search(pattern, text) and pts > score:
             score, category = pts, cat
     src_lower = source.lower()
     for src, bonus in SOURCE_BONUS.items():
