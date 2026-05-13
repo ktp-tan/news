@@ -1,7 +1,8 @@
 """
 Market News Bot — LINE Messaging API
 - ส่งได้ 200 ข้อความ/เดือน จึงรวมข่าวหลายชิ้นเป็น 1 ข้อความเสมอ
-- threshold สูงขึ้น (85) เพื่อกรองเฉพาะข่าวสำคัญจริงๆ
+- threshold 90 + financial relevance filter + topic dedup
+- กรองเฉพาะข่าวที่กระทบตลาดจริงๆ
 """
 
 import os
@@ -20,71 +21,250 @@ LINE_USER_ID       = os.environ["LINE_USER_ID"]
 FINNHUB_TOKEN      = os.environ["FINNHUB_TOKEN"]
 
 STATE_FILE       = Path("state.json")
-SCORE_THRESHOLD  = 85     # สูงกว่าเดิม — เฉพาะข่าวสำคัญมาก (ประหยัด quota)
+SCORE_THRESHOLD  = 90     # เพิ่มจาก 85 → 90 กรองเข้มขึ้น
 PRICE_SPIKE_PCT  = 0.5    # % ขยับที่ถือว่าผิดปกติ
 PRICE_WINDOW_MIN = 15
 MAX_NEWS_PER_MSG = 3      # รวมกี่ข่าวต่อ 1 ข้อความ
+MAX_PER_TOPIC    = 2      # จำกัดข่าวซ้ำหัวข้อเดียวกัน ≤ 2 ต่อรอบ
 
 
 # ── Keyword Scoring ───────────────────────────────────────────────────────────
+# คะแนนปรับใหม่: เน้นข่าวที่กระทบตลาดโดยตรง ลดข่าว geopolitics กว้างๆ
 KEYWORD_RULES = [
+    # Fed — กระทบตลาดโดยตรง คงคะแนนสูง
     ("federal reserve",     90, "Fed"),
     ("fed rate",            90, "Fed"),
     ("fomc",                90, "Fed"),
-    ("interest rate hike",  85, "Fed"),
-    ("interest rate cut",   85, "Fed"),
-    ("powell",              70, "Fed"),
-    ("quantitative",        65, "Fed"),
+    ("interest rate hike",  90, "Fed"),
+    ("interest rate cut",   90, "Fed"),
+    ("rate hike",           85, "Fed"),
+    ("rate cut",            85, "Fed"),
+    ("powell",              75, "Fed"),
+    ("quantitative easing", 70, "Fed"),
+    ("quantitative tightening", 70, "Fed"),
+
+    # Macro — ตัวเลขเศรษฐกิจสำคัญ
+    ("cpi report",          90, "Macro"),
+    ("cpi data",            90, "Macro"),
+    ("cpi print",           90, "Macro"),
     ("cpi",                 85, "Macro"),
-    ("inflation",           75, "Macro"),
+    ("ppi data",            85, "Macro"),
+    ("ppi",                 75, "Macro"),
+    ("inflation data",      85, "Macro"),
+    ("inflation print",     85, "Macro"),
+    ("inflation rate",      80, "Macro"),
+    ("inflation",           60, "Macro"),    # คำกว้าง — ต้องมี source ช่วย
     ("recession",           80, "Macro"),
-    ("gdp",                 70, "Macro"),
+    ("gdp",                 75, "Macro"),
     ("unemployment",        70, "Macro"),
-    ("nonfarm payroll",     85, "Macro"),
-    ("nfp",                 85, "Macro"),
-    ("jobs report",         80, "Macro"),
+    ("nonfarm payroll",     90, "Macro"),
+    ("nfp",                 90, "Macro"),
+    ("jobs report",         85, "Macro"),
+    ("jobs data",           85, "Macro"),
+
+    # Crisis — วิกฤตที่ต้องรู้ทันที
     ("bank failure",        95, "Crisis"),
     ("bank run",            95, "Crisis"),
+    ("market crash",        95, "Crisis"),
+    ("financial crisis",    95, "Crisis"),
+    ("flash crash",         90, "Crisis"),
     ("bankruptcy",          80, "Crisis"),
-    ("default",             80, "Crisis"),
-    ("emergency",           75, "Crisis"),
-    ("collapse",            80, "Crisis"),
-    ("war",                 75, "Geo"),
-    ("sanctions",           70, "Geo"),
-    ("tariff",              70, "Geo"),
-    ("trade war",           80, "Geo"),
-    ("opec",                75, "Geo"),
+    ("default",             70, "Crisis"),
+    ("collapse",            60, "Crisis"),    # ลด — คำกว้างเกินไป
+
+    # Geo — ลดคะแนน geopolitics ทั่วไป เน้นเฉพาะที่กระทบตลาด
+    ("war",                 40, "Geo"),       # ลดจาก 75 → 40 ลดข่าวสงครามล้นทะลัก
+    ("sanctions",           45, "Geo"),       # ลดจาก 70 → 45
+    ("tariff",              60, "Geo"),
+    ("trade war",           75, "Geo"),
+    ("trade deal",          70, "Geo"),
+    ("opec",                80, "Geo"),       # เพิ่มจาก 70 → 80 ข่าว OPEC กระทบน้ำมันโดยตรง
+    ("opec cut",            85, "Geo"),
+    ("oil output",          80, "Geo"),       # เพิ่ม — ผลผลิตน้ำมัน
+    ("oil supply",          80, "Geo"),       # เพิ่ม — อุปทานน้ำมัน
+    ("oil demand",          75, "Geo"),       # เพิ่ม — อุปสงค์น้ำมัน
+    ("oil embargo",         85, "Geo"),
+    ("hormuz",              70, "Geo"),       # เพิ่มจาก 65 → 70
+
+    # Crypto — ข่าวที่กระทบ crypto โดยตรง
     ("bitcoin etf",         80, "Crypto"),
     ("sec crypto",          80, "Crypto"),
     ("crypto ban",          85, "Crypto"),
     ("exchange hack",       85, "Crypto"),
+    ("crypto regulation",   75, "Crypto"),
+
+    # Market Moves — ข่าวที่ตลาดขยับแรง
+    ("market rally",        80, "Market"),
+    ("market selloff",      85, "Market"),
+    ("markets retreat",     75, "Market"),    # เพิ่ม — ตลาดถอย
+    ("markets fall",        80, "Market"),    # เพิ่ม — ตลาดร่วง
+    ("markets drop",        80, "Market"),    # เพิ่ม
+    ("markets falter",      75, "Market"),    # เพิ่ม
+    ("wall st falls",       85, "Market"),    # เพิ่ม — Wall St ร่วง
+    ("wall st drops",       85, "Market"),    # เพิ่ม
+    ("sell-off",            75, "Market"),
+    ("all-time low",        80, "Market"),    # เพิ่ม — ทำ ATL
+    ("all-time high",       75, "Market"),    # เพิ่ม — ทำ ATH
+    ("record high",         75, "Market"),    # เพิ่ม
+    ("record low",          80, "Market"),    # เพิ่ม
+    ("circuit breaker",     95, "Market"),
+    ("trading halt",        90, "Market"),
+    ("black swan",          90, "Market"),
+
+    # Commodity/Currency Market — ราคาสินค้าโภคภัณฑ์/สกุลเงิน
+    ("gold price",          70, "Commodity"),
+    ("gold rally",          75, "Commodity"),
+    ("gold falls",          75, "Commodity"),
+    ("gold extends",        70, "Commodity"),
+    ("oil price",           75, "Commodity"),
+    ("crude price",         75, "Commodity"),
 ]
 
+# Source bonus — ลดลงเพื่อไม่ให้ข่าวไม่เกี่ยวข้องผ่าน threshold
 SOURCE_BONUS = {
-    "reuters":         30,
-    "bloomberg":       30,
+    "reuters":         15,    # ลดจาก 30 → 15
+    "bloomberg":       15,    # ลดจาก 30 → 15
     "federal reserve": 40,
     "sec.gov":         40,
-    "wsj":             25,
-    "ft.com":          25,
-    "cnbc":            15,
+    "wsj":             20,
+    "ft.com":          20,
+    "cnbc":            10,
     "marketwatch":     10,
 }
 
 
+# ── Financial Relevance Filter ────────────────────────────────────────────────
+# ข่าวต้องมีคำเกี่ยวกับการเงิน/ตลาดอย่างน้อย 1 คำ ถึงจะถือว่าเกี่ยวข้อง
+FINANCIAL_TERMS = {
+    # ตลาดและสินทรัพย์
+    "stock", "stocks", "market", "markets", "shares", "equity", "equities",
+    "bond", "bonds", "yield", "yields", "treasury", "treasuries",
+    "index", "indices", "dow", "nasdaq", "s&p", "s&p 500", "nikkei",
+    "ftse", "dax", "hang seng",
+    # สินค้าโภคภัณฑ์
+    "oil", "crude", "brent", "wti", "gold", "silver", "copper",
+    "commodity", "commodities", "lng", "natural gas", "energy",
+    # สกุลเงิน
+    "currency", "currencies", "forex", "dollar", "euro", "yen", "yuan",
+    "rupee", "sterling", "pound",
+    # คริปโต
+    "bitcoin", "btc", "crypto", "ethereum", "eth",
+    # เศรษฐกิจ
+    "economy", "economic", "gdp", "inflation", "deflation",
+    "rate", "rates", "interest rate", "monetary", "fiscal",
+    "cpi", "ppi", "fomc", "fed", "ecb", "boj", "pboc",
+    "imf", "world bank", "central bank",
+    # การเงิน
+    "investor", "investors", "fund", "funds", "hedge fund",
+    "profit", "revenue", "earnings", "quarterly", "forecast",
+    "trade", "trading", "export", "import", "supply chain",
+    "rally", "selloff", "sell-off", "bull", "bear", "volatility",
+    "futures", "options", "derivatives", "debt", "credit", "loan",
+    "bank", "banking", "financial",
+    # ตัวชี้วัดตลาด
+    "wall street", "wall st", "price", "prices", "demand", "supply",
+    "surplus", "deficit", "stimulus", "bailout", "liquidity",
+    "hedge", "hedging", "portfolio", "asset", "assets",
+    "opec", "iea", "eia",
+}
+
+# ── Negative Keywords ─────────────────────────────────────────────────────────
+# หักคะแนนข่าวที่เป็น lifestyle / human interest / ไม่ใช่ข่าวการเงิน
+NEGATIVE_KEYWORDS = [
+    ("holiday",        -30),
+    ("holidays",       -30),
+    ("vacation",       -30),
+    ("travel",         -25),
+    ("tourism",        -25),
+    ("tourist",        -25),
+    ("passenger",      -20),
+    ("passengers",     -20),
+    ("oldest",         -40),
+    ("doctor",         -30),
+    ("lifestyle",      -30),
+    ("recipe",         -40),
+    ("weather",        -30),
+    ("sport",          -30),
+    ("celebrity",      -30),
+    ("entertainment",  -25),
+    ("movie",          -25),
+    ("film",           -25),
+    ("music",          -20),
+    ("fashion",        -30),
+    ("restaurant",     -25),
+    ("seafarer",       -20),
+    ("seafarers",      -20),
+    ("ordeal",         -20),
+    ("livelihoods",    -20),
+    ("summer",         -15),
+    ("world cup",      -30),
+    ("olympic",        -30),
+]
+
+
+def has_financial_relevance(text: str) -> bool:
+    """ตรวจว่าข่าวเกี่ยวกับการเงิน/ตลาดจริงไหม"""
+    text_lower = text.lower()
+    for term in FINANCIAL_TERMS:
+        if term in text_lower:
+            return True
+    return False
+
+
 def score_news(headline: str, summary: str, source: str) -> tuple[int, str]:
+    """ให้คะแนนข่าว — ยิ่งสูงยิ่งสำคัญต่อตลาด"""
     text = (headline + " " + summary).lower()
     score, category = 0, "General"
+
+    # 1) Keyword scoring — ใช้คะแนนสูงสุดที่ match
     for keyword, pts, cat in KEYWORD_RULES:
         pattern = r'\b' + re.escape(keyword) + r'\b'
         if re.search(pattern, text) and pts > score:
             score, category = pts, cat
+
+    # 2) Source bonus
     src_lower = source.lower()
     for src, bonus in SOURCE_BONUS.items():
         if src in src_lower:
             score = min(100, score + bonus)
             break
+
+    # 3) Negative keywords — หักคะแนนข่าว lifestyle/ไม่เกี่ยว
+    for neg_kw, penalty in NEGATIVE_KEYWORDS:
+        if neg_kw in text:
+            score = max(0, score + penalty)
+
+    # 4) Financial relevance check — ถ้าไม่เกี่ยวการเงินเลย หักหนัก
+    if score > 0 and not has_financial_relevance(headline + " " + summary):
+        score = max(0, score - 40)
+
     return score, category
+
+
+# ── Topic Deduplication ───────────────────────────────────────────────────────
+def get_topic_key(headline: str) -> str:
+    """สร้าง topic key สำหรับจำกัดข่าวซ้ำหัวข้อเดียวกัน"""
+    h = headline.lower()
+
+    if any(w in h for w in ["iran", "hormuz", "tehran", "irgc"]):
+        return "iran_conflict"
+    if any(w in h for w in ["fed ", "federal reserve", "fomc", "rate hike", "rate cut"]):
+        return "fed_policy"
+    if any(w in h for w in ["cpi", "inflation data", "inflation print"]):
+        return "inflation_data"
+    if any(w in h for w in ["bitcoin", "crypto", "ethereum"]):
+        return "crypto"
+    if any(w in h for w in ["oil price", "crude", "opec", "lng", "brent"]):
+        return "energy"
+    if any(w in h for w in ["tariff", "trade war", "trade deal"]):
+        return "trade"
+    if any(w in h for w in ["sanctions"]) and "iran" not in h:
+        return "sanctions_other"
+    if any(w in h for w in ["china", "xi jinping"]):
+        return "china"
+
+    # default: ใช้ headline (ไม่ dedup)
+    return f"_unique_{headline[:80]}"
 
 
 # ── Price Spike Detection ─────────────────────────────────────────────────────
@@ -177,7 +357,7 @@ def send_line(text: str):
 
 def format_news_block(news: dict, score: int, category: str) -> str:
     """สร้างข้อความข่าวชิ้นเดียว (ไม่มี header รวม)"""
-    bar = "🔴" if score >= 85 else "🟠"
+    bar = "🔴" if score >= 90 else "🟠"
     ts = datetime.fromtimestamp(
         news.get("datetime", time.time()), tz=timezone.utc)
     ts_str = ts.strftime("%H:%M UTC")
@@ -278,7 +458,9 @@ def main():
     recent_news = [n for n in all_news if n.get("datetime", 0) >= cutoff]
     print(f"[*] Recent: {len(recent_news)} items")
 
-    news_blocks = []
+    news_blocks   = []
+    topic_counts  = {}   # นับจำนวนข่าวต่อ topic สำหรับ dedup
+
     for news in recent_news:
         nid = str(news.get("id", news.get("headline", "")))
         if nid in seen_ids:
@@ -290,13 +472,26 @@ def main():
             news.get("summary", ""),
             news.get("source", ""),
         )
+
         if score < SCORE_THRESHOLD:
+            if score > 0:
+                print(f"[skip] score={score} < {SCORE_THRESHOLD} | "
+                      f"{news.get('headline','')[:60]}")
             continue
+
+        # Topic dedup — จำกัดข่าวซ้ำหัวข้อเดียวกัน
+        topic = get_topic_key(news.get("headline", ""))
+        if topic_counts.get(topic, 0) >= MAX_PER_TOPIC:
+            print(f"[skip] topic dedup ({topic}) | "
+                  f"{news.get('headline','')[:60]}")
+            continue
+        topic_counts[topic] = topic_counts.get(topic, 0) + 1
 
         news_blocks.append(
             format_news_block(news, score, category)
         )
-        print(f"[+] Queued score={score} | {news.get('headline','')[:60]}")
+        print(f"[+] Queued score={score} topic={topic} | "
+              f"{news.get('headline','')[:60]}")
 
     # 3) ส่ง — รวมทุกอย่างเป็น 1 ข้อความ (ถ้ามีข่าวหรือ spike)
     if news_blocks or spikes:
