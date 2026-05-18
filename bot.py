@@ -72,19 +72,33 @@ KEYWORD_RULES = [
     ("default",             70, "Crisis"),
     ("collapse",            60, "Crisis"),    # ลด — คำกว้างเกินไป
 
-    # Geo — ลดคะแนน geopolitics ทั่วไป เน้นเฉพาะที่กระทบตลาด
-    ("war",                 40, "Geo"),       # ลดจาก 75 → 40 ลดข่าวสงครามล้นทะลัก
-    ("sanctions",           45, "Geo"),       # ลดจาก 70 → 45
+    # Geo — สงคราม/ความขัดแย้งที่กระทบตลาด
+    ("war",                 75, "Geo"),       # เพิ่มจาก 40 → 75 ข่าวสงครามกระทบตลาดจริง
+    ("military strike",     85, "Geo"),       # เพิ่ม — โจมตีทางทหาร
+    ("airstrike",           80, "Geo"),       # เพิ่ม — ทิ้งระเบิด
+    ("airstrikes",          80, "Geo"),       # เพิ่ม
+    ("missile strike",      85, "Geo"),       # เพิ่ม — ยิงขีปนาวุธ
+    ("missile attack",      85, "Geo"),       # เพิ่ม
+    ("invasion",            85, "Geo"),       # เพิ่ม — บุกรุก
+    ("ceasefire",           80, "Geo"),       # เพิ่ม — หยุดยิง (ตลาดขึ้น)
+    ("peace deal",          80, "Geo"),       # เพิ่ม — ข้อตกลงสันติภาพ
+    ("peace talks",         75, "Geo"),       # เพิ่ม — เจรจาสันติภาพ
+    ("escalation",          80, "Geo"),       # เพิ่ม — ความตึงเครียดเพิ่ม
+    ("military",            60, "Geo"),       # เพิ่ม — ทหาร (คำกว้าง)
+    ("conflict",            65, "Geo"),       # เพิ่ม — ความขัดแย้ง
+    ("nuclear",             80, "Geo"),       # เพิ่ม — นิวเคลียร์
+    ("nato",                70, "Geo"),       # เพิ่ม — NATO
+    ("sanctions",           65, "Geo"),       # เพิ่มจาก 45 → 65
     ("tariff",              60, "Geo"),
     ("trade war",           75, "Geo"),
     ("trade deal",          70, "Geo"),
-    ("opec",                80, "Geo"),       # เพิ่มจาก 70 → 80 ข่าว OPEC กระทบน้ำมันโดยตรง
+    ("opec",                80, "Geo"),       # ข่าว OPEC กระทบน้ำมันโดยตรง
     ("opec cut",            85, "Geo"),
-    ("oil output",          80, "Geo"),       # เพิ่ม — ผลผลิตน้ำมัน
-    ("oil supply",          80, "Geo"),       # เพิ่ม — อุปทานน้ำมัน
-    ("oil demand",          75, "Geo"),       # เพิ่ม — อุปสงค์น้ำมัน
+    ("oil output",          80, "Geo"),       # ผลผลิตน้ำมัน
+    ("oil supply",          80, "Geo"),       # อุปทานน้ำมัน
+    ("oil demand",          75, "Geo"),       # อุปสงค์น้ำมัน
     ("oil embargo",         85, "Geo"),
-    ("hormuz",              70, "Geo"),       # เพิ่มจาก 65 → 70
+    ("hormuz",              70, "Geo"),
 
     # Crypto — ข่าวที่กระทบ crypto โดยตรง
     ("bitcoin etf",         80, "Crypto"),
@@ -166,6 +180,10 @@ FINANCIAL_TERMS = {
     "surplus", "deficit", "stimulus", "bailout", "liquidity",
     "hedge", "hedging", "portfolio", "asset", "assets",
     "opec", "iea", "eia",
+    # สงคราม/ความขัดแย้งที่กระทบตลาด
+    "war", "conflict", "military", "invasion", "airstrike", "missile",
+    "ceasefire", "sanctions", "escalation", "nato", "nuclear",
+    "geopolitical", "defense", "arms",
 }
 
 # ── Negative Keywords ─────────────────────────────────────────────────────────
